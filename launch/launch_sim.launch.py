@@ -68,11 +68,19 @@ def generate_launch_description():
         launch_arguments={'use_sim_time': 'true'}.items()
     )
 
-    # ✅ IMU Covariance Override Node
+    # IMU Covariance Override Node
     imu_covariance_override_node = Node(
-        package='articubot_one',
-        executable='imu_covariance_override_node.py',  # or without .py if renamed
+        package=package_name,
+        executable='imu_covariance_override_node.py',  # or remove .py if you renamed the executable
         name='imu_covariance_override',
+        output='screen'
+    )
+
+    # EKF Fusion Node
+    ekf_fusion_node = Node(
+        package=package_name,
+        executable='ekf_fusion_node.py',  # or without .py if renamed
+        name='ekf_fusion',
         output='screen'
     )
 
@@ -83,5 +91,6 @@ def generate_launch_description():
         diff_drive_spawner,
         joint_broad_spawner,
         joystick_launch,
-        imu_covariance_override_node  # ✅ added here
+        imu_covariance_override_node,
+        ekf_fusion_node  # Added EKF node here
     ])
