@@ -71,7 +71,7 @@ def generate_launch_description():
     # IMU Covariance Override Node
     imu_covariance_override_node = Node(
         package=package_name,
-        executable='imu_covariance_override_node.py',  # or remove .py if you renamed the executable
+        executable='imu_covariance_override_node.py',
         name='imu_covariance_override',
         output='screen'
     )
@@ -79,9 +79,23 @@ def generate_launch_description():
     # EKF Fusion Node
     ekf_fusion_node = Node(
         package=package_name,
-        executable='ekf_fusion_node.py',  # or without .py if renamed
+        executable='ekf_fusion_node.py',
         name='ekf_fusion',
         output='screen'
+    )
+
+    # SLAM Toolbox Node
+    slam_toolbox_node = Node(
+        package='slam_toolbox',
+        executable='async_slam_toolbox_node',
+        name='slam_toolbox',
+        output='screen',
+        parameters=[os.path.join(
+            get_package_share_directory(package_name),
+            'config', 'mapper_params_online_async.yaml')],
+        remappings=[
+            ('/odom', '/odom_fused')  # Use EKF fused odometry
+        ]
     )
 
     return LaunchDescription([
@@ -92,5 +106,6 @@ def generate_launch_description():
         joint_broad_spawner,
         joystick_launch,
         imu_covariance_override_node,
-        ekf_fusion_node  # Added EKF node here
+        ekf_fusion_node,
+        slam_toolbox_node  # ✅ SLAM Toolbox added here
     ])
