@@ -1,9 +1,11 @@
+#!/usr/bin/env python3
 import os
+import sys
 
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription
+from launch.actions import IncludeLaunchDescription, ExecuteProcess
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 
 from launch_ros.actions import Node
@@ -12,11 +14,12 @@ from launch_ros.actions import Node
 def generate_launch_description():
 
     package_name = 'articubot_one'
+    pkg_share    = get_package_share_directory(package_name)
 
     # Robot State Publisher
     rsp = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
-            os.path.join(get_package_share_directory(package_name), 'launch', 'rsp.launch.py')
+            os.path.join(pkg_share, 'launch', 'rsp.launch.py')
         ]),
         launch_arguments={
             'use_sim_time': 'true',
@@ -25,21 +28,21 @@ def generate_launch_description():
     )
 
     # Gazebo Launch
-    gazebo_params_file = os.path.join(
-        get_package_share_directory(package_name), 'config', 'gazebo_params.yaml'
-    )
-
     gazebo = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
-            os.path.join(get_package_share_directory('gazebo_ros'), 'launch', 'gazebo.launch.py')
+            os.path.join(
+                get_package_share_directory('gazebo_ros'),
+                'launch', 'gazebo.launch.py'
+            )
         ]),
         launch_arguments={
-            'extra_gazebo_args': '--ros-args --params-file ' + gazebo_params_file,
-            'world': os.path.join(get_package_share_directory(package_name), 'worlds', 'cones.world')
+            'extra_gazebo_args':
+                '--ros-args --params-file ' + os.path.join(pkg_share, 'config', 'gazebo_params.yaml'),
+            'world': os.path.join(pkg_share, 'worlds', 'cones.world')
         }.items()
     )
 
-    # Spawn the robot in Gazebo
+    # Spawn the robot
     spawn_entity = Node(
         package='gazebo_ros',
         executable='spawn_entity.py',
@@ -47,36 +50,35 @@ def generate_launch_description():
         output='screen'
     )
 
-    # Spawners for controllers
+    # Controller spawners
     diff_drive_spawner = Node(
         package="controller_manager",
         executable="spawner",
         arguments=["diff_cont"],
     )
-
     joint_broad_spawner = Node(
         package="controller_manager",
         executable="spawner",
         arguments=["joint_broad"],
     )
 
-    # Joystick teleop (optional)
+    # Joystick
     joystick_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
-            os.path.join(get_package_share_directory(package_name), 'launch', 'joystick.launch.py')
+            os.path.join(pkg_share, 'launch', 'joystick.launch.py')
         ]),
         launch_arguments={'use_sim_time': 'true'}.items()
     )
 
-    # IMU Covariance Override Node
-    imu_covariance_override_node = Node(
+    # IMU Covariance Override
+    imu_cov_override_node = Node(
         package=package_name,
         executable='imu_covariance_override_node.py',
         name='imu_covariance_override',
         output='screen'
     )
 
-    # EKF Fusion Node
+    # EKF Fusion
     ekf_fusion_node = Node(
         package=package_name,
         executable='ekf_fusion_node.py',
@@ -84,19 +86,42 @@ def generate_launch_description():
         output='screen'
     )
 
-    # SLAM Toolbox Node
+    # SLAM Toolbox
     slam_toolbox_node = Node(
         package='slam_toolbox',
         executable='async_slam_toolbox_node',
         name='slam_toolbox',
         output='screen',
-        parameters=[os.path.join(
-            get_package_share_directory(package_name),
-            'config', 'mapper_params_online_async.yaml')],
-        remappings=[
-            ('/odom', '/odom_fused')  # Use EKF fused odometry
-        ]
+        parameters=[os.path.join(pkg_share, 'config', 'mapper_params_online_async.yaml')],
+        remappings=[('/odom', '/odom_fused')]
     )
+
+    # SLAM Evaluator – Execute Python script directly
+    evaluator_script = os.path.join(
+        os.getenv("HOME"),
+        'dev_ws',
+        'src',
+        package_name,
+        'imu_covariance_override',
+        'slam_evaluator.py'
+    )
+
+
+    slam_evaluator = Node(
+        package=package_name,
+        executable='slam_evaluator.py',
+        name='slam_evaluator',
+        output='screen',
+        emulate_tty=True,
+        parameters=[{
+            'robot_name': 'my_bot',
+            'est_topic': '/pose',
+            'output_dir': os.path.expanduser('~/slam_eval'),
+            'world_frame': 'odom',
+            'base_frame': 'base_link'
+        }]
+)
+
 
     return LaunchDescription([
         rsp,
@@ -105,7 +130,8 @@ def generate_launch_description():
         diff_drive_spawner,
         joint_broad_spawner,
         joystick_launch,
-        imu_covariance_override_node,
+        imu_cov_override_node,
         ekf_fusion_node,
-        slam_toolbox_node  # ✅ SLAM Toolbox added here
+        slam_toolbox_node,
+        slam_evaluator,
     ])

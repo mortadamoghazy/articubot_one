@@ -37,6 +37,7 @@ install(
   PROGRAMS
     imu_covariance_override/imu_covariance_override_node.py
     imu_covariance_override/ekf_fusion_node.py
+    imu_covariance_override/slam_evaluator.py
 
   DESTINATION lib/${PROJECT_NAME}
 )
