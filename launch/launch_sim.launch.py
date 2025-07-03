@@ -5,10 +5,11 @@ import sys
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, ExecuteProcess, TimerAction
+from launch.actions import IncludeLaunchDescription, ExecuteProcess
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 
 from launch_ros.actions import Node
+
 
 def generate_launch_description():
 
@@ -77,58 +78,50 @@ def generate_launch_description():
         output='screen'
     )
 
-    # === REPLACED CUSTOM EKF WITH robot_localization EKF ===
-    robot_localization_ekf = TimerAction(
-        period=3.0,
-        actions=[
-            Node(
-                package='robot_localization',
-                executable='ekf_node',
-                name='ekf_filter_node',
-                output='screen',
-                parameters=[os.path.join(pkg_share, 'config', 'ekf.yaml')],
-                remappings=[
-                    ('/odometry/filtered', '/odom_fused')
-                ]
-            )
-        ]
+    # EKF Fusion
+    ekf_fusion_node = Node(
+        package=package_name,
+        executable='ekf_fusion_node.py',
+        name='ekf_fusion',
+        output='screen'
     )
 
     # SLAM Toolbox
-    slam_toolbox_node = TimerAction(
-        period=4.0,
-        actions=[
-            Node(
-                package='slam_toolbox',
-                executable='async_slam_toolbox_node',
-                name='slam_toolbox',
-                output='screen',
-                parameters=[os.path.join(pkg_share, 'config', 'mapper_params_online_async.yaml')],
-                remappings=[('/odom', '/odom_fused')]
-            )
-        ]
+    slam_toolbox_node = Node(
+        package='slam_toolbox',
+        executable='async_slam_toolbox_node',
+        name='slam_toolbox',
+        output='screen',
+        parameters=[os.path.join(pkg_share, 'config', 'mapper_params_online_async.yaml')],
+        remappings=[('/odom', '/odom_fused')]
     )
 
     # SLAM Evaluator – Execute Python script directly
-    slam_evaluator = TimerAction(
-        period=5.0,
-        actions=[
-            Node(
-                package=package_name,
-                executable='slam_evaluator.py',
-                name='slam_evaluator',
-                output='screen',
-                emulate_tty=True,
-                parameters=[{
-                    'robot_name': 'my_bot',
-                    'est_topic': '/pose',
-                    'output_dir': os.path.expanduser('~/slam_eval'),
-                    'world_frame': 'odom',
-                    'base_frame': 'base_link'
-                }]
-            )
-        ]
+    evaluator_script = os.path.join(
+        os.getenv("HOME"),
+        'dev_ws',
+        'src',
+        package_name,
+        'imu_covariance_override',
+        'slam_evaluator.py'
     )
+
+
+    slam_evaluator = Node(
+        package=package_name,
+        executable='slam_evaluator.py',
+        name='slam_evaluator',
+        output='screen',
+        emulate_tty=True,
+        parameters=[{
+            'robot_name': 'my_bot',
+            'est_topic': '/pose',
+            'output_dir': os.path.expanduser('~/slam_eval'),
+            'world_frame': 'odom',
+            'base_frame': 'base_link'
+        }]
+)
+
 
     return LaunchDescription([
         rsp,
@@ -138,7 +131,7 @@ def generate_launch_description():
         joint_broad_spawner,
         joystick_launch,
         imu_cov_override_node,
-        robot_localization_ekf,
+        ekf_fusion_node,
         slam_toolbox_node,
         slam_evaluator,
     ])
