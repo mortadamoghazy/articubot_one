@@ -3,7 +3,6 @@ import os
 import time
 import json
 import csv
-import sys
 
 import numpy as np
 import psutil
@@ -16,16 +15,17 @@ from geometry_msgs.msg import PoseWithCovarianceStamped
 from geometry_msgs.msg import TransformStamped
 from tf2_ros import Buffer, TransformListener, LookupException
 
+
 class SLAMEvaluator(Node):
     def __init__(self):
         super().__init__('slam_evaluator')
 
         # --- PARAMETERS ---
-        self.declare_parameter('est_topic', '/pose')  # ✅ use actual published topic
-        self.declare_parameter('world_frame', 'odom')  # ✅ use odom, not "world"
-        self.declare_parameter('base_frame', 'base_link')
+        self.declare_parameter('est_topic', '/pose')
+        self.declare_parameter('world_frame', 'map')  # ✅ changed from 'odom' to 'map'
+        self.declare_parameter('base_frame', 'base_link')  # ✅ base of the robot
         self.declare_parameter('output_dir', os.path.expanduser('~/slam_eval'))
-        self.declare_parameter('duration_sec', 60.0)  # ✅ Optional shutdown timer
+        self.declare_parameter('duration_sec', 0.0)  # 0 disables auto-shutdown
 
         self.est_topic   = self.get_parameter('est_topic').value
         self.world_frame = self.get_parameter('world_frame').value
@@ -35,10 +35,12 @@ class SLAMEvaluator(Node):
 
         os.makedirs(self.output_dir, exist_ok=True)
 
-        self.get_logger().info(f"✅ SLAM evaluator running for {self.duration_sec:.0f} seconds")
-        self.get_logger().info(f"⏺ Saving to: {self.output_dir}")
-        self.get_logger().info(f"📡 Listening to topic: {self.est_topic}")
+        self.get_logger().info(f"✅ SLAM evaluator started")
+        self.get_logger().info(f"📡 Listening to: {self.est_topic}")
         self.get_logger().info(f"🧭 TF: {self.world_frame} → {self.base_frame}")
+        self.get_logger().info(f"⏺ Output directory: {self.output_dir}")
+        if self.duration_sec > 0:
+            self.get_logger().info(f"⏳ Auto shutdown after {self.duration_sec:.0f} sec")
 
         # --- BUFFERS ---
         self.gt_buf   = []
@@ -60,10 +62,11 @@ class SLAMEvaluator(Node):
             10
         )
 
-        # shutdown timer
-        self.shutdown_timer = self.create_timer(self.duration_sec, self.shutdown)
+        # optional auto shutdown
+        if self.duration_sec > 0:
+            self.create_timer(self.duration_sec, self.shutdown)
 
-        # TF warmup (allow 3s for TFs to populate)
+        # TF warmup (allow 3s)
         self.tf_ready = False
         self.create_timer(3.0, self._check_tf_ready)
 
@@ -82,11 +85,12 @@ class SLAMEvaluator(Node):
         # timestamp
         t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
 
-        # record estimate
+        # record estimate (from SLAM)
         p = msg.pose.pose.position
         self.est_buf.append((t, p.x, p.y, p.z))
         self.get_logger().info(f"[✓] Pose@{t:.2f} → Est=({p.x:.2f}, {p.y:.2f})")
 
+        # record ground truth from TF (map → base_footprint)
         try:
             trans: TransformStamped = self.tf_buffer.lookup_transform(
                 self.world_frame,
@@ -99,6 +103,7 @@ class SLAMEvaluator(Node):
             self.get_logger().warn(f"TF lookup failed at t={t:.3f}: {e}")
             return
 
+        # performance tracking
         now = time.time()
         dt  = now - self._last_cb if self._last_cb else 0.0
         cpu = psutil.cpu_percent(interval=None)
@@ -107,7 +112,7 @@ class SLAMEvaluator(Node):
         self._last_cb = now
 
     def shutdown(self):
-        self.get_logger().info("🔻 Shutting down and saving files...")
+        self.get_logger().info("🔻 Shutting down and saving evaluation data...")
 
         with open(os.path.join(self.output_dir, 'ground_truth.csv'), 'w', newline='') as f:
             w = csv.writer(f); w.writerow(['time','x','y','z']); w.writerows(self.gt_buf)
@@ -121,15 +126,14 @@ class SLAMEvaluator(Node):
             json.dump(metrics, f, indent=4)
 
         self.get_logger().info("✅ Evaluation complete.")
-        rclpy.shutdown()
 
     def _compute_metrics(self):
         gt   = np.array(self.gt_buf)
         est  = np.array(self.est_buf)
         perf = np.array(self.perf_buf)
 
-        if gt.shape[0]<2 or est.shape[0]<2:
-            return {'error':'insufficient data'}
+        if gt.shape[0] < 2 or est.shape[0] < 2:
+            return {'error': 'insufficient data'}
 
         t_gt, pts_gt = gt[:,0], gt[:,1:]
         t_e,  pts_e  = est[:,0], est[:,1:]
@@ -137,24 +141,27 @@ class SLAMEvaluator(Node):
         errs = np.linalg.norm(pts_e - pts_gt, axis=1)
         ate  = float(np.sqrt(np.mean(errs**2)))
 
-        dgt  = pts_gt[1:]-pts_gt[:-1]
-        dest = pts_e[1:]-pts_e[:-1]
-        rpe  = float(np.sqrt(np.mean(np.linalg.norm(dest-dgt,axis=1)**2)))
+        dgt  = pts_gt[1:] - pts_gt[:-1]
+        dest = pts_e[1:] - pts_e[:-1]
+        rpe  = float(np.sqrt(np.mean(np.linalg.norm(dest - dgt, axis=1)**2)))
 
-        pl_gt  = float(np.sum(np.linalg.norm(dgt,axis=1)))
-        pl_est = float(np.sum(np.linalg.norm(dest,axis=1)))
+        pl_gt  = float(np.sum(np.linalg.norm(dgt, axis=1)))
+        pl_est = float(np.sum(np.linalg.norm(dest, axis=1)))
 
-        drift_per_m  = ate/pl_gt  if pl_gt>0 else None
-        scale_drift  = pl_est/pl_gt if pl_gt>0 else None
+        drift_per_m  = ate / pl_gt  if pl_gt > 0 else None
+        scale_drift  = pl_est / pl_gt if pl_gt > 0 else None
 
-        cpu = perf[:,1]; mem = perf[:,2]; dt = perf[:,3][1:] if perf.shape[0]>1 else []
+        cpu = perf[:,1]
+        mem = perf[:,2]
+        dt  = perf[:,3][1:] if perf.shape[0] > 1 else []
+
         perf_stats = {
             'cpu_avg': float(np.mean(cpu)),
-            'cpu_peak':float(np.max(cpu)),
-            'mem_avg_MB':float(np.mean(mem)),
-            'mem_peak_MB':float(np.max(mem)),
+            'cpu_peak': float(np.max(cpu)),
+            'mem_avg_MB': float(np.mean(mem)),
+            'mem_peak_MB': float(np.max(mem)),
             'avg_callback_interval_s': float(np.mean(dt)) if len(dt) else None,
-            'max_callback_interval_s': float(np.max(dt))  if len(dt) else None,
+            'max_callback_interval_s': float(np.max(dt)) if len(dt) else None,
         }
 
         return {
@@ -174,7 +181,8 @@ def main(args=None):
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        pass
+        node.get_logger().info("🔻 Ctrl+C detected — saving results...")
+        node.shutdown()
     finally:
         node.destroy_node()
         rclpy.shutdown()
