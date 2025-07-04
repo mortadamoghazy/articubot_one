@@ -61,12 +61,12 @@ def generate_launch_description():
     )
 
     # Twist mux
-    #twist_mux = Node(
-     #   package="twist_mux",
-      #  executable="twist_mux",
-       # parameters=[os.path.join(pkg_share, 'config', 'twist_mux.yaml'), {'use_sim_time': True}],
-        #remappings=[('/cmd_vel_out', '/diff_cont/cmd_vel_unstamped')]
-    #)
+    twist_mux = Node(
+        package="twist_mux",
+        executable="twist_mux",
+        parameters=[os.path.join(pkg_share, 'config', 'twist_mux.yaml'), {'use_sim_time': True}],
+        remappings=[('/cmd_vel_out', '/diff_cont/cmd_vel_unstamped')]
+    )
 
     # IMU covariance override
     imu_cov_override_node = Node(
@@ -107,7 +107,7 @@ def generate_launch_description():
         diff_drive_spawner,
         joint_broad_spawner,
         joystick_launch,
-        #twist_mux,
+        twist_mux,
         imu_cov_override_node,
         ekf_fusion_node,
         slam_evaluator
