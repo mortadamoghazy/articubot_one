@@ -39,7 +39,8 @@ def generate_launch_description():
         package='gazebo_ros',
         executable='spawn_entity.py',
         arguments=['-topic', 'robot_description', '-entity', 'my_bot'],
-        output='screen'
+        output='screen',
+        parameters=[{'use_sim_time': True}]
     )
 
     # Controller spawners
@@ -47,11 +48,14 @@ def generate_launch_description():
         package="controller_manager",
         executable="spawner",
         arguments=["diff_cont"],
+        parameters=[{'use_sim_time': True}]
     )
+
     joint_broad_spawner = Node(
         package="controller_manager",
         executable="spawner",
         arguments=["joint_broad"],
+        parameters=[{'use_sim_time': True}]
     )
 
     # Joystick
@@ -73,7 +77,8 @@ def generate_launch_description():
         package=package_name,
         executable='imu_covariance_override_node.py',
         name='imu_covariance_override',
-        output='screen'
+        output='screen',
+        parameters=[{'use_sim_time': True}]
     )
 
     # EKF fusion
@@ -81,7 +86,8 @@ def generate_launch_description():
         package=package_name,
         executable='ekf_fusion_node.py',
         name='ekf_fusion',
-        output='screen'
+        output='screen',
+        parameters=[{'use_sim_time': True}]
     )
 
     # SLAM Evaluator (optional utility)
@@ -92,6 +98,7 @@ def generate_launch_description():
         output='screen',
         emulate_tty=True,
         parameters=[{
+            'use_sim_time': True,
             'robot_name': 'my_bot',
             'est_topic': '/pose',
             'output_dir': os.path.expanduser('~/slam_eval'),

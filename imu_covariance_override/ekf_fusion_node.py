@@ -12,58 +12,46 @@ class EKFOdometryFusionNode(Node):
     def __init__(self):
         super().__init__('ekf_odom_fusion_node')
 
-        # Subscriptions
-        self.sub_odom = self.create_subscription(
-            Odometry,
-            '/diff_cont/odom',
-            self.odom_callback,
-            10
-        )
+        self.sub_odom = self.create_subscription(Odometry, '/diff_cont/odom', self.odom_callback, 10)
+        self.sub_imu = self.create_subscription(Imu, '/imu_corrected', self.imu_callback, 10)
+        self.pub_fused = self.create_publisher(Odometry, '/odom_fused', 10)
 
-        self.sub_imu = self.create_subscription(
-            Imu,
-            '/imu_corrected',
-            self.imu_callback,
-            10
-        )
-
-        # Publisher
-        self.pub_fused = self.create_publisher(
-            Odometry,
-            '/odom_fused',
-            10
-        )
-
-        # EKF state
         self.x = np.zeros((6, 1))  # [x, y, theta, vx, vy, omega]
-        self.P = np.eye(6) * 0.1   # Initial state covariance
-        self.Q = np.eye(6) * 0.01  # Process noise
-        self.R = np.diag([0.05, 0.05, 0.01])  # Measurement noise
+        self.P = np.eye(6) * 0.1
+        self.Q = np.diag([0.01, 0.01, 0.05, 0.1, 0.1, 0.2])  # Process noise
+        self.R = np.diag([0.02, 0.02, 0.005])  # Measurement noise
 
         self.last_time = None
-
-        # Latest IMU data
         self.latest_imu_orientation = None
-        self.latest_imu_angular_velocity = 0.0
+        self.latest_imu_angular_velocity = None
+
+        # Orientation filtering
+        self.filtered_yaw = None
+        self.yaw_filter_alpha = 0.9  # Higher = smoother, lower = more reactive
 
     def imu_callback(self, msg):
         self.latest_imu_orientation = msg.orientation
         self.latest_imu_angular_velocity = msg.angular_velocity.z
 
+        imu_yaw = self.quaternion_to_yaw(msg.orientation)
+        if self.filtered_yaw is None:
+            self.filtered_yaw = imu_yaw
+        else:
+            delta = self.normalize_angle(imu_yaw - self.filtered_yaw)
+            self.filtered_yaw = self.normalize_angle(self.filtered_yaw + (1 - self.yaw_filter_alpha) * delta)
+
     def odom_callback(self, msg):
         now = self.get_clock().now()
         if self.last_time is None:
             self.last_time = now
-
-            # Initialize state from first measurement
             self.x[0, 0] = msg.pose.pose.position.x
             self.x[1, 0] = msg.pose.pose.position.y
-            self.x[2, 0] = self.quaternion_to_yaw(
-                self.latest_imu_orientation if self.latest_imu_orientation else msg.pose.pose.orientation
-            )
+            init_yaw = self.quaternion_to_yaw(self.latest_imu_orientation or msg.pose.pose.orientation)
+            self.filtered_yaw = init_yaw
+            self.x[2, 0] = init_yaw
             self.x[3, 0] = msg.twist.twist.linear.x
             self.x[4, 0] = msg.twist.twist.linear.y
-            self.x[5, 0] = self.latest_imu_angular_velocity
+            self.x[5, 0] = self.latest_imu_angular_velocity or msg.twist.twist.angular.z
             return
 
         dt = (now - self.last_time).nanoseconds * 1e-9
@@ -72,26 +60,32 @@ class EKFOdometryFusionNode(Node):
             return
         self.last_time = now
 
-        # Prediction step
-        F = np.eye(6)
-        F[0, 3] = dt
-        F[1, 4] = dt
-        F[2, 5] = dt
+        # === Predict step ===
+        theta = self.x[2, 0]
+        v = self.x[3, 0]
+        omega = self.latest_imu_angular_velocity or self.x[5, 0]
 
-        self.x = F @ self.x
-        self.x[5, 0] = self.latest_imu_angular_velocity  # ω from IMU
+        self.x[0, 0] += v * math.cos(theta) * dt
+        self.x[1, 0] += v * math.sin(theta) * dt
+        self.x[2, 0] += omega * dt
+        self.x[2, 0] = self.normalize_angle(self.x[2, 0])
+        self.x[5, 0] = omega
+
+        # Jacobian F
+        F = np.eye(6)
+        F[0, 2] = -v * math.sin(theta) * dt
+        F[0, 3] = math.cos(theta) * dt
+        F[1, 2] = v * math.cos(theta) * dt
+        F[1, 3] = math.sin(theta) * dt
+        F[2, 5] = dt
 
         self.P = F @ self.P @ F.T + self.Q
 
-        # Measurement: x, y from odometry; θ from IMU
-        imu_yaw = self.quaternion_to_yaw(
-            self.latest_imu_orientation if self.latest_imu_orientation else msg.pose.pose.orientation
-        )
-
+        # === Measurement update ===
         z = np.array([
             [msg.pose.pose.position.x],
             [msg.pose.pose.position.y],
-            [imu_yaw]
+            [self.filtered_yaw]
         ])
 
         H = np.zeros((3, 6))
@@ -99,8 +93,8 @@ class EKFOdometryFusionNode(Node):
         H[1, 1] = 1
         H[2, 2] = 1
 
-        y = z - (H @ self.x)
-        y[2, 0] = self.normalize_angle(y[2, 0])  # ensure yaw error is bounded
+        y = z - H @ self.x
+        y[2, 0] = self.normalize_angle(y[2, 0])
 
         S = H @ self.P @ H.T + self.R
         K = self.P @ H.T @ np.linalg.inv(S)
@@ -108,7 +102,7 @@ class EKFOdometryFusionNode(Node):
         self.x = self.x + K @ y
         self.P = (np.eye(6) - K @ H) @ self.P
 
-        # Publish fused odometry
+        # === Publish fused Odometry ===
         fused_msg = Odometry()
         fused_msg.header.stamp = now.to_msg()
         fused_msg.header.frame_id = 'odom'
@@ -117,10 +111,18 @@ class EKFOdometryFusionNode(Node):
         fused_msg.pose.pose.position.x = float(self.x[0])
         fused_msg.pose.pose.position.y = float(self.x[1])
         fused_msg.pose.pose.orientation = self.yaw_to_quaternion(float(self.x[2]))
-
         fused_msg.twist.twist.linear.x = float(self.x[3])
         fused_msg.twist.twist.linear.y = float(self.x[4])
         fused_msg.twist.twist.angular.z = float(self.x[5])
+
+        # === Covariance (upper 3x3 blocks) ===
+        fused_msg.pose.covariance[0] = 0.02   # x
+        fused_msg.pose.covariance[7] = 0.02   # y
+        fused_msg.pose.covariance[35] = 0.01  # yaw
+
+        fused_msg.twist.covariance[0] = 0.05   # vx
+        fused_msg.twist.covariance[7] = 0.05   # vy
+        fused_msg.twist.covariance[35] = 0.02  # wz
 
         self.pub_fused.publish(fused_msg)
 
@@ -139,7 +141,6 @@ class EKFOdometryFusionNode(Node):
 
     def normalize_angle(self, angle):
         return math.atan2(math.sin(angle), math.cos(angle))
-
 
 def main(args=None):
     rclpy.init(args=args)
