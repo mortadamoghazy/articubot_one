@@ -9,11 +9,11 @@ options = {
   tracking_frame = "base_link",           -- Robot base for internal tracking
   published_frame = "base_link",          -- Reported pose frame
   odom_frame = "odom",                    -- EKF-fused odometry frame
-  provide_odom_frame = false,            -- Don't publish tf from Cartographer
+  provide_odom_frame = true,            -- Don't publish tf from Cartographer
 
   publish_frame_projected_to_2d = true,  -- Flatten pose (needed for Nav2)
 
-  use_odometry = true,                   -- Use odom from EKF (odom_fused)
+  use_odometry = false,                   -- Use odom from EKF (odom_fused)
   use_nav_sat = false,
   use_landmarks = false,
 

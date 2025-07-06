@@ -90,15 +90,15 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}]
     )
 
+
     # SLAM Evaluator (optional utility)
     slam_evaluator = Node(
         package=package_name,
-        executable='slam_evaluator.py',
+        executable='toolbox_eval.py',
         name='slam_evaluator',
         output='screen',
         emulate_tty=True,
         parameters=[{
-            'use_sim_time': True,
             'robot_name': 'my_bot',
             'est_topic': '/pose',
             'output_dir': os.path.expanduser('~/slam_eval'),
@@ -117,5 +117,6 @@ def generate_launch_description():
         twist_mux,
         imu_cov_override_node,
         ekf_fusion_node,
-        slam_evaluator
+        slam_evaluator,
+        #cartographer_pose_pub
     ])

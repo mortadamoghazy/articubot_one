@@ -38,7 +38,8 @@ install(
     imu_covariance_override/imu_covariance_override_node.py
     imu_covariance_override/ekf_fusion_node.py
     imu_covariance_override/slam_evaluator.py
-
+    imu_covariance_override/cartographer_pose_publisher.py
+    imu_covariance_override/toolbox_eval.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

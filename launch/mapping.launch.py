@@ -1,13 +1,13 @@
-#!/usr/bin/env python3
-
-import os
 from launch import LaunchDescription
 from launch.actions import TimerAction
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
+import os
 
 def generate_launch_description():
-    config_dir = os.path.join(get_package_share_directory('articubot_one'), 'config')
+    config_dir = os.path.join(
+        get_package_share_directory('articubot_one'), 'config'
+    )
 
     cartographer_node = Node(
         package='cartographer_ros',
@@ -21,7 +21,7 @@ def generate_launch_description():
         ],
         remappings=[
             ('scan', '/scan'),
-            ('odom', '/odom_fused')
+            # Odom remapping not needed if use_odometry = false
         ]
     )
 
@@ -37,7 +37,35 @@ def generate_launch_description():
         ]
     )
 
+    pose_publisher_node = Node(
+        package='articubot_one',
+        executable='cartographer_pose_publisher.py',
+        name='cartographer_pose_pub',
+        output='screen',
+        parameters=[
+            {'use_sim_time': True},
+            {'parent_frame': 'map'}  # <- changed from 'odom'
+        ]
+    )
+
+    slam_eval_node = Node(
+        package='articubot_one',
+        executable='slam_evaluator.py',
+        name='slam_evaluator',
+        output='screen',
+        parameters=[
+            {'use_sim_time': True},
+            {'duration_sec': 60.0},
+            {'world_frame': 'map'},       # <- changed from 'odom'
+            {'base_frame': 'base_link'},
+            {'est_topic': '/cartographer_pose'},
+            {'output_dir': os.path.expanduser('~/slam_eval')}
+        ]
+    )
+
     return LaunchDescription([
-        TimerAction(period=10.0, actions=[cartographer_node]),
-        TimerAction(period=11.0, actions=[occupancy_grid_node])
+        TimerAction(period=5.0, actions=[cartographer_node]),
+        TimerAction(period=6.0, actions=[occupancy_grid_node]),
+        TimerAction(period=7.0, actions=[pose_publisher_node]),
+        TimerAction(period=8.0, actions=[slam_eval_node])
     ])

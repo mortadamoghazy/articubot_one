@@ -18,16 +18,15 @@ class EKFOdometryFusionNode(Node):
 
         self.x = np.zeros((6, 1))  # [x, y, theta, vx, vy, omega]
         self.P = np.eye(6) * 0.1
-        self.Q = np.diag([0.01, 0.01, 0.05, 0.1, 0.1, 0.2])  # Process noise
-        self.R = np.diag([0.02, 0.02, 0.005])  # Measurement noise
+        self.Q = np.diag([0.01, 0.01, 0.05, 0.1, 0.1, 0.2])
+        self.R = np.diag([0.02, 0.02, 0.01])
 
         self.last_time = None
         self.latest_imu_orientation = None
         self.latest_imu_angular_velocity = None
 
-        # Orientation filtering
         self.filtered_yaw = None
-        self.yaw_filter_alpha = 0.9  # Higher = smoother, lower = more reactive
+        self.yaw_filter_alpha = 0.8
 
     def imu_callback(self, msg):
         self.latest_imu_orientation = msg.orientation
@@ -38,7 +37,8 @@ class EKFOdometryFusionNode(Node):
             self.filtered_yaw = imu_yaw
         else:
             delta = self.normalize_angle(imu_yaw - self.filtered_yaw)
-            self.filtered_yaw = self.normalize_angle(self.filtered_yaw + (1 - self.yaw_filter_alpha) * delta)
+            self.filtered_yaw = self.normalize_angle(
+                self.filtered_yaw + (1 - self.yaw_filter_alpha) * delta)
 
     def odom_callback(self, msg):
         now = self.get_clock().now()
@@ -46,7 +46,8 @@ class EKFOdometryFusionNode(Node):
             self.last_time = now
             self.x[0, 0] = msg.pose.pose.position.x
             self.x[1, 0] = msg.pose.pose.position.y
-            init_yaw = self.quaternion_to_yaw(self.latest_imu_orientation or msg.pose.pose.orientation)
+            init_yaw = self.quaternion_to_yaw(
+                self.latest_imu_orientation or msg.pose.pose.orientation)
             self.filtered_yaw = init_yaw
             self.x[2, 0] = init_yaw
             self.x[3, 0] = msg.twist.twist.linear.x
@@ -60,7 +61,6 @@ class EKFOdometryFusionNode(Node):
             return
         self.last_time = now
 
-        # === Predict step ===
         theta = self.x[2, 0]
         v = self.x[3, 0]
         omega = self.latest_imu_angular_velocity or self.x[5, 0]
@@ -71,7 +71,6 @@ class EKFOdometryFusionNode(Node):
         self.x[2, 0] = self.normalize_angle(self.x[2, 0])
         self.x[5, 0] = omega
 
-        # Jacobian F
         F = np.eye(6)
         F[0, 2] = -v * math.sin(theta) * dt
         F[0, 3] = math.cos(theta) * dt
@@ -81,7 +80,6 @@ class EKFOdometryFusionNode(Node):
 
         self.P = F @ self.P @ F.T + self.Q
 
-        # === Measurement update ===
         z = np.array([
             [msg.pose.pose.position.x],
             [msg.pose.pose.position.y],
@@ -102,7 +100,6 @@ class EKFOdometryFusionNode(Node):
         self.x = self.x + K @ y
         self.P = (np.eye(6) - K @ H) @ self.P
 
-        # === Publish fused Odometry ===
         fused_msg = Odometry()
         fused_msg.header.stamp = now.to_msg()
         fused_msg.header.frame_id = 'odom'
@@ -115,14 +112,13 @@ class EKFOdometryFusionNode(Node):
         fused_msg.twist.twist.linear.y = float(self.x[4])
         fused_msg.twist.twist.angular.z = float(self.x[5])
 
-        # === Covariance (upper 3x3 blocks) ===
-        fused_msg.pose.covariance[0] = 0.02   # x
-        fused_msg.pose.covariance[7] = 0.02   # y
-        fused_msg.pose.covariance[35] = 0.01  # yaw
+        fused_msg.pose.covariance[0] = 0.02
+        fused_msg.pose.covariance[7] = 0.02
+        fused_msg.pose.covariance[35] = 0.01
 
-        fused_msg.twist.covariance[0] = 0.05   # vx
-        fused_msg.twist.covariance[7] = 0.05   # vy
-        fused_msg.twist.covariance[35] = 0.02  # wz
+        fused_msg.twist.covariance[0] = 0.05
+        fused_msg.twist.covariance[7] = 0.05
+        fused_msg.twist.covariance[35] = 0.02
 
         self.pub_fused.publish(fused_msg)
 
@@ -142,12 +138,14 @@ class EKFOdometryFusionNode(Node):
     def normalize_angle(self, angle):
         return math.atan2(math.sin(angle), math.cos(angle))
 
+
 def main(args=None):
     rclpy.init(args=args)
     node = EKFOdometryFusionNode()
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()
